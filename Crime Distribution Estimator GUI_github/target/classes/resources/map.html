@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+    <title>Crime Pattern Detection</title>
+    <style type="text/css">
+        html {
+            height: 100%;
+        }
+
+        body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+
+        #map-canvas {
+            height: 100%;
+        }
+
+        .myScale {
+            position: absolute;
+            top: 60%;
+            left: 10%;
+            display: inline;
+            padding: 0;
+            z-index: 10;
+        }
+        .colors {
+            margin: 0;
+            text-indent: 0px;
+            padding: 0;
+            border: none;
+            width: 50px;
+            float: left;
+            text-align: start;
+            overflow: hidden;
+            resize: none;
+            background: none;
+        }
+
+    </style>
+    <script type="text/javascript"
+            src="https://maps.googleapis.com/maps/api/js?libraries=visualization,drawing&key=AIzaSyCKaRp0mZ9jAT58AfYjoUWgs3NNcnVmjfk&sensor=false">
+    </script>
+    <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.11.3/jquery.min.js"></script>
+    <script type="text/javascript" src="geoxml3.js"></script>
+    <script type="text/javascript" src="precinct.js"></script>
+    <script type="text/javascript"  src="rpa.js"></script>
+    <script type="text/javascript">
+        var rgbList = ["rgb(237,248,251)", "rgb(178,226,226)", "rgb(102,194,164)", "rgb(44,162,95)", "rgb(0,109,44)"];
+        var rgbList2 = ["rgb(8,81,156)", "rgb(49,130,189)", "rgb(107,174,214)", "rgb(239,243,255)", "rgb(252,141,89)", "rgb(227,74,51)", "rgb(179,0,0)"];
+        var map;
+        var MAXCASEDISPLAY = 800;
+        var rectangle;
+        var heatMapOverlay;
+        var markerSet = [];
+        var precinctSet = [];
+        var hotSpotList = [];
+        var rpaList=[];
+        var precinctFocus = -1;
+        var enablePrecinct = false;
+        var enableRpa = false;
+        var shape;
+        var drawingManager;
+        var heatMapBoundsCache;
+        //Initialize google map
+        function initialize() {
+            var mapOptions = {
+                center: new google.maps.LatLng(36.1667, -86.7833),
+                zoom: 10
+            };
+            $("#over_map").hide();
+            $("#over_map2").hide();
+            map = new google.maps.Map(document.getElementById("map-canvas"),
+                mapOptions);
+        }
+
+
+        //Add listener  for selecting area in temporal mode
+        function addRpaListeners() {
+            for (i = 0; i < rpaList.length; i++) {
+                rpaList[i].addListener();
+            }
+        }
+
+     
+   
+        //Add a marker to the map with four variables: latitude , longitude, type of the crime as a string , time of the crime and precinct as a string
+        function addMarker(latitude, longitude, type, time,precin) {
+            var marker = new google.maps.Marker({
+                position: new google.maps.LatLng(latitude, longitude),
+                title: type
+            });
+            //If the type of the marker is simulated, use a different icon
+            if (type === "simulated") {
+                //marker.setMap(map);
+                var image = {
+                    url: 's.png',
+                    scaledSize: new google.maps.Size(32, 32)
+                }
+                marker.setIcon(image);
+            }
+            var markerObject = {
+                marker: marker,
+                precinct:precin
+            }
+            markerSet.push(markerObject);
+            var contentString = '<div id="crime"><h1>' + type + '</h1><p font-size="50%">Time: ' + time + '<p></div>';
+            var infowindow = new google.maps.InfoWindow({
+                content: contentString
+            });
+            google.maps.event.addListener(marker, 'click', function () {
+                infowindow.open(map, marker);
+            });
+            for (i = 0; i < precinctSet.length; i++) {
+                if (precin === precinctSet[i].name) {
+                    precinctSet[i].addMarker(marker);
+                    break;
+                }
+            }
+        }
+
+        //Add one rpa onto the map
+        function addRpa(coords,precinctString,name){
+            var myRpa = new rpa(coords, map, precinctString, name);
+            rpaList.push(myRpa);
+        }
+
+        //Show the reporting police area
+        function showRpa(focus) {
+            for (i = 0; i < rpaList.length; i++) {
+                if (rpaList[i].precinct === precinctSet[focus].name) {
+                    rpaList[i].polygon.setMap(map);
+                }
+            }
+            enableRpa = true;
+        }
+
+        //Hide the reporting police area
+        function hideRpa() {
+            for (i = 0; i < rpaList.length; i++) {
+                rpaList[i].polygon.setMap(null);
+            }
+            $("#over_map").hide();
+            enableRpa = false;
+        }
+
+        //Add one precinct onto the map
+        function addPrecinct(coords, name) {
+            var precinct1 = new precinct(coords, name, map);
+            precinctSet.push(precinct1);
+        }
+
+        //Create a rectangle based on n ,e ,s ,w coordinates
+        function createRectangle(n, e, s, w) {
+            var ne = new google.maps.LatLng(n, e);
+            var sw = new google.maps.LatLng(s, w);
+            var bound = new google.maps.LatLngBounds(sw, ne);
+            var rectangle = new google.maps.Rectangle({
+                bounds: bound,
+                editable: false
+            });
+            return rectangle;
+        }
+
+        //Clear all the listener for choosing rpa.
+        function clearRpaListeners() {
+            for (i = 0; i < rpaList.length; i++) {
+                google.maps.event.clearListeners(rpaList[i].polygon, 'click');
+            }
+        }
+
+
+        //Clear the shape from the map
+        function clearShape() {
+            if (typeof shape != 'undefined') {
+                shape.setMap(null);
+            }
+        }
+
+
+        //Clear the precinct from the map
+        function clearPrecinct() {
+            for (i = 0; i < precinctSet.length ; i++) {
+                precinctSet[i].polygon.setMap(null);
+            }
+        }
+
+        //Clear the markers,not only make them invisible but also clear them from memory.
+        function clearMarker() {
+            for (i = 0; i < markerSet.length ; i++) {
+                markerSet[i]["marker"].setMap(null);
+            }
+            for (i = 0; i < precinctSet.length ; i++) {
+                precinctSet[i].markerSet.length=0;
+            }
+            for (i = 0; i < rpaList.length ; i++) {
+                rpaList[i].markerSet.length = 0;
+            }
+            markerSet.length=0;
+        }
+
+        //Show all precincts, in the mean time clear all markers so that markers will behave properly based on the precincts
+        function showPrecinct() {
+            enablePrecinct = true;
+            for (i = 0; i < precinctSet.length; i++) {
+                precinctSet[i].polygon.setMap(map);
+                //precinctSet[i].observer = precinctSet;
+                //precinctSet[i].addListeners();
+            }
+            for (j = 0; j < markerSet.length; j++) {
+                markerSet[j]["marker"].setMap(null);
+            }
+        }
+
+
+        //Hide the precincts
+        function hidePrecinct() {
+            enablePrecinct = false;
+            for (i = 0; i < precinctSet.length; i++) {
+                precinctSet[i].polygon.setMap(null);
+            }
+        }
+
+        //Show the heatMap overlay via a file in local system.
+        function showHeatMap(file){
+            heatMapOverlay = new google.maps.GroundOverlay(file, heatMapBoundsCache);
+            heatMapOverlay.setOpacity(0.5);
+            heatMapOverlay.setMap(map);
+        }
+
+
+        //Make the heatMap overlay invisible
+        function clearHeatMap() {
+            if (heatMapOverlay != null) {
+                heatMapOverlay.setMap(null);
+            }
+        }
+
+        
+
+        //Testing coords.
+        var triangleCoords = [
+      new google.maps.LatLng(25.774252, -80.190262),
+      new google.maps.LatLng(18.466465, -66.118292),
+      new google.maps.LatLng(32.321384, -64.75737)
+        ];
+
+        /*
+        $(document).keyup(function (e) {
+            if (e.keyCode == 27) { // escape key maps to keycode `27`
+                if (typeof shape != 'undefined') {
+                    shape.setMap(null);
+                }
+            }
+        });*/
+
+
+        //Return boolean indicating whether the shape to select area for the temporal density has been drawn.
+        function isEnableArea() {
+            if (shape) {
+                return shape.getMap() != null;
+            }
+            return false;
+        }
+
+
+        //Add one hotspot onto the map
+        function addHotSpot(coordinates) {
+            var ellipse = new google.maps.Polygon({
+                path: coordinates,
+                fillColor: '#f00',
+                fillOpacity: 0.35,
+                strokeWeight: 0
+            });
+            ellipse.setMap(map);
+            hotSpotList.push(ellipse);
+        }
+
+
+        //Set the hotspots to be invisible.
+        function clearHotSpot() {
+            for (i = 0; i < hotSpotList.length; i++) {
+                hotSpotList[i].setMap(null);
+            }
+        }
+
+
+        /*function recoverOverviewMode() {
+            for (i = 0; i < precinctSet.length; i++) {
+                precinctSet[i].clearMarker();
+                precinctSet[i].addListeners();
+            }
+        }*/
+
+
+        //Set the currrent focus to the assigned precinct.Show the rpas in that precinct.
+        function setFocusRpa(index) {
+            precinctFocus = index;
+            for (i = 0; i < rpaList.length; i++) {
+                if (rpaList[i].precinct === precinctSet[index].name) {
+                    rpaList[i].showPolygon();
+                }
+                else {
+                    rpaList[i].hidePolygon();
+                }
+            }
+        }
+
+
+        //Set focus to a precinct, change the color of that precinct and show all the markers on that precinct
+        /*function setFocusPrecinct(index) {
+            for (i = 0; i < precinctSet.length; i++) {
+                precinctSet[i].deFocus();
+            }
+            precinctSet[index].setToFocus();
+        }*/
+
+        function setFocusMarker(index) {
+            for (i = 0; i < precinctSet.length; i++) {
+                precinctSet[i].clearMarker();
+            }
+            precinctSet[index].showMarker(map);
+        }
+
+
+        function hideMarker() {
+            for (i = 0; i < markerSet.length; i++) {
+                markerSet[i]["marker"].setMap(null);
+            }
+        }   
+
+        function refreshRpaColor(ind, count) {
+            if (rpaList.length > 0) {
+                var col=count;
+                if (count >= 4) {
+                    col = 4;
+                }
+                rpaList[ind].setColor(rgbList[col]);
+                rpaList[ind].addInfo(count);
+            }
+        }
+
+        function refreshRpaColor2(ind, count) {
+            if (rpaList.length > 0) {
+                var col;
+                if (count <= -5) {
+                    col = 0;
+                } else if(count==-4||count==-3){
+                    col = 1;
+                } else if (count == -1 || count == -2) {
+                    col = 2;
+                } else if (count == 0) {
+                    col = 3;
+                } else if (count == 1||count==2) {
+                    col = 4;
+                } else if (count == 3 || count == 4) {
+                    col = 5;
+                } else if (count >= 5) {
+                    col = 6;
+                }
+                rpaList[ind].setColor(rgbList2[col]);
+                rpaList[ind].addInfo(count);
+            }
+        }
+
+
+        function showMarker() {
+            for (i = 0; i < markerSet.length; i++) {
+                markerSet[i]["marker"].setMap(map);
+            }
+        }
+
+        google.maps.event.addDomListener(window, 'load', initialize);
+    </script>
+</head>
+<body>
+    <div class="myScale" id="over_map">
+        <textarea class="colors" id="color_schema" readonly style=" height: 75px; line-height: 15px;">0&#10;1&#10;2&#10;3&#10;>=4</textarea>
+        <svg width="15">
+            <rect fill="rgb(237,248,251)" width="15" height="15" y="0"></rect>
+            <rect fill="rgb(178,226,226)" width="15" height="15" y="15"></rect>
+            <rect fill="rgb(102,194,164 )" width="15" height="15" y="30"></rect>
+            <rect fill="rgb(44,162,95)" width="15" height="15" y="45"></rect>
+            <rect fill="rgb(0,109,44)" width="15" height="15" y="60"></rect>
+        </svg>
+    </div>
+    <div class="myScale" id="over_map2">
+        <textarea class="colors" id="color_schema2" readonly style=" height: 105px; line-height: 15px;">&lt;=-5&#10;-4~-3&#10;-2~-1&#10;0&#10;1~2&#10;3~4&#10;>=5</textarea>
+        <svg width="15">
+            <rect fill="rgb(8,81,156)" width="15" height="15" y="0"></rect>
+            <rect fill="rgb(49,130,189)" width="15" height="15" y="15"></rect>
+            <rect fill="rgb(107,174,214)" width="15" height="15" y="30"></rect>
+            <rect fill="rgb(239,243,255)" width="15" height="15" y="45"></rect>
+            <rect fill="rgb(252,141,89)" width="15" height="15" y="60"></rect>
+            <rect fill="rgb(227,74,51)" width="15" height="15" y="75"></rect>
+            <rect fill="rgb(179,0,0)" width="15" height="15" y="90"></rect>
+        </svg>
+    </div>
+    <div id="map-canvas"></div>
+</body>
+</html>
